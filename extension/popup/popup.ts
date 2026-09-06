@@ -15,14 +15,13 @@ let cachePromise: Promise<string | null> | null = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   const snitchBtn = document.getElementById('snitch') as HTMLButtonElement;
-  const cancelBtn = document.getElementById('cancel') as HTMLButtonElement;
+  const closeBtn = document.getElementById('close') as HTMLButtonElement;
   const copyBtn = document.getElementById('copy') as HTMLButtonElement;
   const notes = document.getElementById('notes') as HTMLTextAreaElement;
   const screenshotCb = document.getElementById('screenshot') as HTMLInputElement;
   const field = document.querySelector('.field') as HTMLElement | null;
   const screenshotRow = document.querySelector('.checkbox') as HTMLElement | null;
   const snitchStateEl = document.getElementById('snitch-state') as HTMLSpanElement;
-  const cancelStateEl = document.getElementById('cancel-state') as HTMLSpanElement;
   const copyStateEl = document.getElementById('copy-state') as HTMLSpanElement;
   const resultEl = document.getElementById('result') as HTMLParagraphElement;
 
@@ -45,11 +44,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const cfg = ctaConfig(state);
 
     snitchBtn.disabled = !cfg.snitchEnabled;
-    cancelBtn.disabled = !cfg.cancelEnabled;
+    closeBtn.hidden = !cfg.closeVisible;
     copyBtn.disabled = !cfg.copyEnabled;
 
     snitchStateEl.textContent = cfg.snitchLabel;
-    cancelStateEl.textContent = cfg.cancelLabel;
     copyStateEl.textContent = cfg.copyLabel;
 
     if (field) field.hidden = !cfg.inputsEnabled;
@@ -183,8 +181,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  cancelBtn.addEventListener('click', async () => {
-    cancelBtn.disabled = true;
+  closeBtn.addEventListener('click', async () => {
+    closeBtn.disabled = true;
     resultEl.textContent = 'Cancelling…';
     resultEl.className = 'result';
 
@@ -206,7 +204,7 @@ document.addEventListener('DOMContentLoaded', () => {
       showError(err instanceof Error ? err.message : 'Unknown error');
       await refreshStatus();
     } finally {
-      cancelBtn.disabled = false;
+      closeBtn.disabled = false;
     }
   });
 

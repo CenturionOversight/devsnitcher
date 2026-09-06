@@ -2165,56 +2165,57 @@ describe('SNITCHSHOT clipboard writer', () => {
 });
 
 describe('popup CTA state render projection', () => {
-  test('IDLE → only SNITCH enabled; no action is self-contradictory', () => {
+  test('IDLE → SNITCH enabled; × hidden; no other action', () => {
     const cfg = ctaConfig('idle');
     assert.equal(cfg.snitchEnabled, true);
-    assert.equal(cfg.cancelEnabled, false);
+    assert.equal(cfg.closeVisible, false);
     assert.equal(cfg.copyEnabled, false);
     assert.equal(cfg.inputsEnabled, true);
     assert.equal(cfg.snitchLabel, 'Ready');
-    assert.equal(cfg.cancelLabel, 'Not observing');
     assert.equal(cfg.copyLabel, 'No report');
   });
 
-  test('OBSERVING → only CANCEL enabled; inputs disabled', () => {
+  test('OBSERVING → SNITCH unavailable; × visible and actionable; COPY unavailable', () => {
     const cfg = ctaConfig('observing');
     assert.equal(cfg.snitchEnabled, false);
-    assert.equal(cfg.cancelEnabled, true);
+    assert.equal(cfg.closeVisible, true, '× must be visible while acquisition is active');
     assert.equal(cfg.copyEnabled, false);
     assert.equal(cfg.inputsEnabled, false);
     assert.equal(cfg.snitchLabel, 'Watching…');
-    assert.equal(cfg.cancelLabel, 'Stop observing');
     assert.equal(cfg.copyLabel, 'Not ready');
   });
 
-  test('SNITCHSHOT_PENDING → only COPY SNITCHSHOT enabled', () => {
+  test('SNITCHSHOT_PENDING → only COPY SNITCHSHOT enabled; × hidden', () => {
     const cfg = ctaConfig('snitchshot_pending');
     assert.equal(cfg.snitchEnabled, false);
-    assert.equal(cfg.cancelEnabled, false);
+    assert.equal(cfg.closeVisible, false);
     assert.equal(cfg.copyEnabled, true, 'a pending report must make COPY actionable');
     assert.equal(cfg.inputsEnabled, false);
     assert.equal(cfg.snitchLabel, 'Report pending');
-    assert.equal(cfg.cancelLabel, 'Not observing');
     assert.equal(cfg.copyLabel, 'Send report to clipboard');
   });
 
-  test('COPYING (local transition) → nothing actionable; COPY shows progress', () => {
+  test('COPYING (local transition) → nothing actionable; COPY shows progress; × hidden', () => {
     const cfg = ctaConfig('copying');
     assert.equal(cfg.snitchEnabled, false);
-    assert.equal(cfg.cancelEnabled, false);
+    assert.equal(cfg.closeVisible, false);
     assert.equal(cfg.copyEnabled, false, 'double invocation must be prevented during copy');
     assert.equal(cfg.inputsEnabled, false);
     assert.equal(cfg.copyLabel, 'Copying…');
   });
 
-  test('every state yields exactly one enabled primary CTA (or none during COPYING)', () => {
+  test('primary CTAs are never contradictory; × is the sole active control while acquiring', () => {
     for (const state of ['idle', 'observing', 'snitchshot_pending', 'copying'] as const) {
       const cfg = ctaConfig(state);
-      const enabled = [cfg.snitchEnabled, cfg.cancelEnabled, cfg.copyEnabled].filter(
-        Boolean,
-      ).length;
-      const expected = state === 'copying' ? 0 : 1;
-      assert.equal(enabled, expected, `state ${state} must enable exactly ${expected} CTA`);
+      const enabled = [cfg.snitchEnabled, cfg.copyEnabled].filter(Boolean).length;
+      // Observing exposes only the × (not a primary CTA); COPYING locks all.
+      const expected = state === 'observing' || state === 'copying' ? 0 : 1;
+      assert.equal(enabled, expected, `state ${state} must enable exactly ${expected} primary CTA`);
+      assert.equal(
+        cfg.closeVisible,
+        state === 'observing',
+        `× must be visible ONLY during observing (state ${state})`,
+      );
     }
   });
 });

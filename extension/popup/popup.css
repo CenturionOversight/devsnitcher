@@ -21,6 +21,7 @@ html, body {
 
 body { padding: 14px; }
 
+.brand { position: relative; padding-right: 28px; }
 .brand h1 {
   margin: 0;
   font-size: 18px;
@@ -81,15 +82,35 @@ textarea:focus { outline: none; border-color: var(--accent); }
   opacity: .72;
   transform: none;
 }
-.snitch.cancel { background: #8a2233; }
-.snitch.cancel:hover { background: #6d1a28; }
-.snitch.cancel:disabled:hover { background: #8a2233; }
 .snitch.copy { background: #275a9c; }
 .snitch.copy:hover { background: #1f4a81; }
 .snitch.copy:disabled:hover { background: #275a9c; }
 .snitch:disabled .snitch-label { color: #c6c9d4; }
 .snitch:disabled .snitch-state { color: #a7adbd; }
 .snitch-state { font-size: 11px; font-weight: 500; opacity: .85; }
+
+.close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.close:hover { color: var(--text); background: var(--panel); }
+.close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.close[hidden] { display: none; }
 
 .result { font-size: 12px; color: var(--muted); min-height: 16px; margin: 0; text-align: center; }
 .result.ok { color: var(--ok); }

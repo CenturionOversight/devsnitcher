@@ -10,6 +10,7 @@
     <header class="brand">
       <h1>DEV<span>SNITCHER</span></h1>
       <p class="tagline">Press SNITCH. Paste into AI.</p>
+      <button id="close" class="close" type="button" aria-label="Cancel SNITCH" hidden>×</button>
     </header>
 
     <main>
@@ -31,11 +32,6 @@
       <button id="snitch" class="snitch" type="button">
         <span class="snitch-label">SNITCH</span>
         <span class="snitch-state" id="snitch-state">Ready</span>
-      </button>
-
-      <button id="cancel" class="snitch cancel" type="button" disabled>
-        <span class="snitch-label">CANCEL</span>
-        <span class="snitch-state" id="cancel-state">Not observing</span>
       </button>
 
       <button id="copy" class="snitch copy" type="button" disabled>
