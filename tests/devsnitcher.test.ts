@@ -1428,6 +1428,43 @@ describe('DEVPEEPER browser-observed network (DEVPEEPER-004)', () => {
     assert.equal(entries[0].status, 503);
   });
 
+  test('terminal network events arriving during getNetworkEntries are drained, not dropped', async () => {
+    // Premature-finalization regression: a request whose terminal event is still
+    // in Chromium's async delivery pipeline when the evidence snapshot starts
+    // must survive into the entries. The bounded drain waits (lifecycle-tied,
+    // hard deadline) and re-reads the undetermined set every tick.
+    const transport = makeTransport();
+    const observer = new ChromiumObserver(3, transport, {
+      networkDrain: {
+        tickMs: 1,
+        deadlineMs: 500,
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      },
+    });
+    await observer.start();
+
+    transport.emitEvent({ tabId: 3 }, 'Network.requestWillBeSent', {
+      requestId: 'req-late',
+      timestamp: 10.0,
+      request: { url: 'https://api.example.com/down', method: 'GET' },
+    });
+    // No responseReceived and no terminal event yet: the request is in-flight.
+    const pending = observer.getNetworkEntries();
+
+    // Deliver the transport failure while the drain is still within its bound.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    transport.emitEvent({ tabId: 3 }, 'Network.loadingFailed', {
+      requestId: 'req-late',
+      timestamp: 12.0,
+      errorText: 'net::ERR_CONNECTION_REFUSED',
+    });
+
+    const entries = await pending;
+    assert.equal(entries.length, 1, 'a late loadingFailed must not be dropped');
+    assert.equal(entries[0].status, 0);
+    assert.equal(entries[0].responsePreview, 'net::ERR_CONNECTION_REFUSED');
+  });
+
   test('Chrome detach clears accumulated network history', async () => {
     const transport = makeTransport();
     const observer = new ChromiumObserver(3, transport);
@@ -1598,9 +1635,13 @@ describe('bounded SNITCH session lifecycle', () => {
     attachCalls: DebuggerTarget[];
     detachCalls: DebuggerTarget[];
     failCommands: Set<string>;
+    emitEvent(target: DebuggerTarget, method: string, params?: unknown): void;
   }
 
   function makeSessionTransport(): SessionMockTransport {
+    const eventListeners: Array<
+      (target: DebuggerTarget, method: string, params?: unknown) => void
+    > = [];
     const transport: SessionMockTransport = {
       attachCalls: [],
       detachCalls: [],
@@ -1615,8 +1656,17 @@ describe('bounded SNITCH session lifecycle', () => {
         if (transport.failCommands.has(method)) throw new Error(`command failed: ${method}`);
         return {};
       },
-      onEvent: () => () => undefined,
+      onEvent(listener) {
+        eventListeners.push(listener);
+        return () => {
+          const i = eventListeners.indexOf(listener);
+          if (i >= 0) eventListeners.splice(i, 1);
+        };
+      },
       onDetach: () => () => undefined,
+      emitEvent(target, method, params) {
+        for (const l of [...eventListeners]) l(target, method, params);
+      },
     };
     return transport;
   }
@@ -1773,6 +1823,68 @@ describe('bounded SNITCH session lifecycle', () => {
     assert.deepEqual(captured.evidence!.jsErrors, [], 'jsErrors are prospective-only at SNITCH time');
     assert.deepEqual(captured.evidence!.network, [], 'network is prospective-only at SNITCH time');
     assert.equal(transport.attachCalls.length, 1, 'attached exactly the one SNITCH tab');
+  });
+
+  test('network failures generated during active acquisition survive into assembled Evidence.network', async () => {
+    const captured: { evidence: Evidence | null } = { evidence: null };
+    const transport = makeSessionTransport();
+    const { session } = makeSessionDeps({
+      transport,
+      // Deliver the harness's failure lifecycles while the observer is attached
+      // and before finalization: an HTTP 404 and a genuine transport failure.
+      acquireBounded: async () => {
+        transport.emitEvent({ tabId: 1 }, 'Network.requestWillBeSent', {
+          requestId: 'n-404',
+          timestamp: 1.0,
+          request: { url: 'https://a.example/intentional-404', method: 'GET' },
+        });
+        transport.emitEvent({ tabId: 1 }, 'Network.responseReceived', {
+          requestId: 'n-404',
+          response: { status: 404 },
+        });
+        transport.emitEvent({ tabId: 1 }, 'Network.loadingFinished', {
+          requestId: 'n-404',
+          timestamp: 2.0,
+        });
+        transport.emitEvent({ tabId: 1 }, 'Network.requestWillBeSent', {
+          requestId: 'n-refused',
+          timestamp: 1.0,
+          request: { url: 'http://127.0.0.1:9/x', method: 'GET' },
+        });
+        transport.emitEvent({ tabId: 1 }, 'Network.loadingFailed', {
+          requestId: 'n-refused',
+          timestamp: 1.5,
+          errorText: 'net::ERR_CONNECTION_REFUSED',
+        });
+        return {
+          environment: {
+            url: 'https://a.example',
+            title: 'A',
+            browser: 'Chrome',
+            platform: 'Test',
+            viewport: { width: 1280, height: 720 },
+            timestamp: 1,
+          },
+          dom: null,
+        };
+      },
+      onComplete: async (evidence) => {
+        captured.evidence = evidence;
+      },
+    });
+
+    await session.start(ctx({ tabId: 1, tabUrl: 'https://a.example' }));
+
+    assert.ok(captured.evidence);
+    assert.equal(captured.evidence!.network.length, 2, 'both failure categories survive assembly');
+    const http404 = captured.evidence!.network.find((e) => e.status === 404);
+    const transportFail = captured.evidence!.network.find((e) => e.status === 0);
+    assert.ok(http404, 'HTTP >=400 must survive into Evidence.network');
+    assert.equal(http404!.url, 'https://a.example/intentional-404');
+    assert.equal(http404!.method, 'GET');
+    assert.ok(transportFail, 'loadingFailed must survive into Evidence.network as status 0');
+    assert.equal(transportFail!.url, 'http://127.0.0.1:9/x');
+    assert.equal(transportFail!.responsePreview, 'net::ERR_CONNECTION_REFUSED');
   });
 
   test('requested screenshot is carried into the completed evidence', async () => {

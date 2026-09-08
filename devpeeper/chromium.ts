@@ -40,6 +40,23 @@ export const CONSOLE_MAX_ENTRIES = 200;
 /** Bounded runtime-error history retained for the current active-tab observation session. */
 export const JSError_MAX_ENTRIES = 50;
 
+/** Tuning for the bounded terminal-network drain (injectable in tests). */
+export interface NetworkDrainOptions {
+  /** Poll interval while awaiting in-flight network lifecycle events. */
+  tickMs?: number;
+  /** Hard bound on how long the drain may run; SNITCH waits no longer. */
+  deadlineMs?: number;
+  /** Injectable clock for deterministic tests. Defaults to setTimeout. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const NETWORK_DRAIN_DEFAULT_TICK_MS = 25;
+const NETWORK_DRAIN_DEFAULT_DEADLINE_MS = 1500;
+
+function defaultDrainSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * DEVPEEPER Chromium/CDP observer.
  *
@@ -72,12 +89,19 @@ export class ChromiumObserver implements ObservationAdapter {
   private readonly networkTracker = new NetworkTracker();
   private readonly unsubscribers: Array<() => void> = [];
   private readonly target: DebuggerTarget;
+  private readonly networkDrain: Required<NetworkDrainOptions>;
 
   constructor(
     private readonly tabId: number,
     private readonly transport: DebuggerTransport,
+    options?: { networkDrain?: NetworkDrainOptions },
   ) {
     this.target = { tabId };
+    this.networkDrain = {
+      tickMs: options?.networkDrain?.tickMs ?? NETWORK_DRAIN_DEFAULT_TICK_MS,
+      deadlineMs: options?.networkDrain?.deadlineMs ?? NETWORK_DRAIN_DEFAULT_DEADLINE_MS,
+      sleep: options?.networkDrain?.sleep ?? defaultDrainSleep,
+    };
   }
 
   /** The tab this observer is bound to (the active-tab attachment identity). */
@@ -167,29 +191,55 @@ export class ChromiumObserver implements ObservationAdapter {
 
   /**
    * Bounded accumulated network history for the current active-tab session.
-   * Finalizes any in-flight requests and fetches bounded response bodies for the
-   * retained HTTP failures. A missing/failed body leaves the preview empty and
-   * never drops the entry.
+   * First drains the in-flight network lifecycle (bounded, lifecycle-tied:
+   * no wait when nothing has started, hard deadline otherwise) so the
+   * snapshot does not race Chromium's asynchronous `Network.*` terminal
+   * events, then finalizes any conclusive requests and fetches bounded
+   * response bodies for the retained HTTP failures. A missing/failed body
+   * leaves the preview empty and never drops the entry.
    */
   async getNetworkEntries(): Promise<NetworkEntry[]> {
-    const { entries, needBody } = this.networkTracker.finalize();
-    for (const requestId of needBody) {
-      const entry = this.networkTracker.getEntryForRequest(requestId);
-      if (!entry) continue;
-      try {
-        const result = await this.transport.sendCommand(
-          this.target,
-          'Network.getResponseBody',
-          { requestId },
-        );
-        entry.responsePreview = decodeResponseBody(result as GetResponseBodyResult);
-      } catch {
-        // Body unavailable; keep the network entry with an empty preview.
-      } finally {
-        this.networkTracker.markBodyFetched(requestId);
+      await this.drainNetworkLifecycle();
+      const { entries, needBody } = this.networkTracker.finalize();
+      for (const requestId of needBody) {
+        const entry = this.networkTracker.getEntryForRequest(requestId);
+        if (!entry) continue;
+        try {
+          const result = await this.transport.sendCommand(
+            this.target,
+            'Network.getResponseBody',
+            { requestId },
+          );
+          entry.responsePreview = decodeResponseBody(result as GetResponseBodyResult);
+        } catch {
+          // Body unavailable; keep the network entry with an empty preview.
+        } finally {
+          this.networkTracker.markBodyFetched(requestId);
+        }
       }
+      return entries.slice();
     }
-    return entries.slice();
+
+    /**
+   * Bounded, lifecycle-tied drain before the network evidence snapshot.
+   * Waits only while started requests are still awaiting an outcome
+   * (no `responseReceived`, no terminal event), and never beyond the hard
+   * deadline. It is not an unconditional harvest sleep: with no in-flight
+   * requests it returns immediately, and requests created mid-drain are
+   * picked up because the undetermined set is re-evaluated every tick.
+   * Requests still unresolved when the deadline passes are left out — the
+   * report reflects what had conclusively occurred at SNITCH time.
+   */
+  private async drainNetworkLifecycle(): Promise<void> {
+    if (this.networkTracker.undeterminedRequestIds().length === 0) return;
+    const { tickMs, deadlineMs, sleep } = this.networkDrain;
+    const deadline = Date.now() + deadlineMs;
+    while (
+      this.networkTracker.undeterminedRequestIds().length > 0
+      && Date.now() < deadline
+    ) {
+      await sleep(tickMs);
+    }
   }
 
   drain(): ChromiumObservation[] {

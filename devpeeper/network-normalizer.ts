@@ -82,6 +82,8 @@ interface PendingRequest {
 export interface NetworkFinalizeResult {
   entries: NetworkEntry[];
   needBody: string[];
+  /** Request ids that started but have no response and no terminal event yet. */
+  undetermined: string[];
 }
 
 export class NetworkTracker {
@@ -137,16 +139,42 @@ export class NetworkTracker {
     return this.retained.length > 0;
   }
 
-  /** Finalizes any pending requests and returns retained entries plus ids that need a body. */
+  /**
+   * Finalizes requests that reached a conclusive state and returns retained
+   * entries plus ids that need a body. Requests that have started but are still
+   * awaiting an outcome (no `responseReceived`, no terminal event) are KEPT
+   * pending so late `Network.*` lifecycle events can still update them; their
+   * ids are returned as `undetermined`. They are purged by `clear()` on detach.
+   * This prevents finalize from destroying in-flight requests that Chromium is
+   * still delivering asynchronously (the acquisition-time network-loss defect).
+   */
   finalize(): NetworkFinalizeResult {
-    for (const id of [...this.pending.keys()]) this.finalizeRequest(id);
+    for (const id of [...this.pending.keys()]) {
+      const pending = this.pending.get(id);
+      // responseReceived makes the outcome known (retain if >=400); requests
+      // without it stay pending for their terminal event or a later response.
+      if (pending && pending.statusReceived) this.finalizeRequest(id);
+    }
 
     const needBody: string[] = [];
     for (const id of this.retainedById.keys()) {
       const entry = this.retainedById.get(id);
       if (entry && entry.status >= 400 && !this.fetchedBodies.has(id)) needBody.push(id);
     }
-    return { entries: this.retained.slice(), needBody };
+    return {
+      entries: this.retained.slice(),
+      needBody,
+      undetermined: this.undeterminedRequestIds(),
+    };
+  }
+
+  /** Ids of started requests that have neither a response nor a terminal event. */
+  undeterminedRequestIds(): string[] {
+    const ids: string[] = [];
+    for (const [id, pending] of this.pending) {
+      if (!pending.statusReceived && !pending.failed) ids.push(id);
+    }
+    return ids;
   }
 
   getEntryForRequest(requestId: string): NetworkEntry | undefined {

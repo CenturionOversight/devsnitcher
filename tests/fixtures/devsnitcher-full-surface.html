@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DEVSNITCHER FULL-SURFACE TEST HARNESS</title>
+  <style>
+    :root {
+      --ink: #111318;
+      --paper: #f6f7fb;
+      --accent: #275a9c;
+      --accent-2: #c0392b;
+      --muted: #5a6170;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, Arial, sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at 20% 10%, #dbe6f6 0%, #eef1f7 45%, #f7e3df 100%);
+      min-height: 100vh;
+    }
+    header.hero {
+      background: linear-gradient(120deg, #1d3f6e 0%, #275a9c 55%, #7d3a2f 100%);
+      color: #fff;
+      padding: 40px 32px 36px;
+    }
+    header.hero h1 { margin: 0 0 8px; font-size: 2.4rem; letter-spacing: 1px; }
+    header.hero p { margin: 0; font-size: 1.05rem; opacity: 0.92; max-width: 900px; }
+    main { max-width: 980px; margin: 28px auto; padding: 0 24px 64px; }
+    .card {
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid #dfe3ec;
+      border-radius: 12px;
+      padding: 18px 20px;
+      margin: 18px 0;
+      box-shadow: 0 4px 14px rgba(17, 19, 24, 0.08);
+    }
+    .card h2 { margin: 0 0 10px; font-size: 1.15rem; }
+    .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    button {
+      font: inherit;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 18px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    #trigger-all {
+      background: var(--accent);
+      color: #fff;
+      font-size: 1.15rem;
+      padding: 16px 26px;
+      box-shadow: 0 6px 18px rgba(39, 90, 156, 0.35);
+    }
+    #trigger-all:disabled { opacity: 0.55; cursor: default; }
+    .secondary {
+      background: #e8ecf5;
+      color: #223;
+    }
+    #status {
+      font-weight: 600;
+      min-height: 1.4em;
+      margin-top: 12px;
+    }
+    #status.ok { color: var(--accent); }
+    #status.err { color: var(--accent-2); }
+    #target {
+      border: 3px dashed var(--accent);
+      border-radius: 10px;
+      background: #fff9ea;
+      padding: 20px;
+      margin: 14px 0;
+      outline: none;
+    }
+    #target[data-devset="full-surface"] h3 { margin: 0 0 4px; color: var(--accent); }
+    #target code {
+      background: #eef2fa;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .steps ol { margin: 6px 0 0; padding-left: 20px; line-height: 1.65; }
+    .note { color: var(--muted); font-size: 0.92rem; }
+    table.previews { border-collapse: collapse; width: 100%; margin-top: 6px; }
+    table.previews th, table.previews td {
+      border: 1px solid #dfe3ec;
+      padding: 6px 10px;
+      text-align: left;
+      font-size: 0.92rem;
+    }
+    table.previews th { background: #eef1f7; }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <h1>DEVSNITCHER FULL-SURFACE TEST HARNESS</h1>
+    <p>
+      Serve this fixture with <code>python -m http.server 8000</code> and open
+      <code>http://localhost:8000/devsnitcher-full-surface.html</code>. It
+      deliberately generates console, network, and JavaScript failures on
+      demand so one real SNITCH run exercises every report surface.
+    </p>
+  </header>
+
+  <main>
+    <div class="card">
+      <h2>Controls</h2>
+      <div class="controls">
+        <button id="trigger-all" type="button">TRIGGER ALL</button>
+        <button class="secondary" id="console-btn" type="button">Console</button>
+        <button class="secondary" id="network-btn" type="button">Network</button>
+        <button class="secondary" id="js-btn" type="button">JavaScript</button>
+      </div>
+      <p id="status" aria-live="polite"></p>
+    </div>
+
+    <div class="card">
+      <h2>Live sequence</h2>
+      <ol>
+        <li>Open this harness.</li>
+        <li>Open DEVSnitcher.</li>
+        <li>Enter an optional User Description in DEVSnitcher’s notes field.</li>
+        <li>Press SNITCH.</li>
+        <li>While acquisition is active, press <strong>TRIGGER ALL</strong> on this page.</li>
+        <li>When DEVSnitcher is ready, <strong>COPY SNITCHSHOT</strong>.</li>
+        <li>Paste the report into your AI of choice.</li>
+      </ol>
+      <p class="note">
+        User Description is never fabricated here — it is supplied through
+        DEVSnitcher’s notes field before SNITCH.
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>Network failures this harness generates</h2>
+      <table class="previews">
+        <thead>
+          <tr><th>Surface</th><th>What fires</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>HTTP failure</td>
+            <td><code>GET /devsnitcher-intentional-404-&lt;nonce&gt;.txt</code> → HTTP 404</td>
+          </tr>
+          <tr>
+            <td>Transport failure</td>
+            <td><code>GET http://127.0.0.1:9/refuse-now</code> → connection refused</td>
+          </tr>
+          <tr>
+            <td>Delayed transport failure</td>
+            <td><code>GET http://127.0.0.1:9/refuse-delayed</code> after ~600&nbsp;ms → connection refused</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">
+        The acceptance bar: the pasted SNITCHSHOT’s Network section must contain
+        at least one real failed request, and the Summary must not read
+        <code>0 failed API requests</code>.
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>Distinctive snapshot / DOM target</h2>
+      <div id="target" tabindex="0" data-devset="full-surface" data-role="harness-target">
+        <h3>DEVSNITCHER HARNESS TARGET</h3>
+        <p>
+          This element has the stable id <code>#devsnitcher-harness-target</code>
+          and data attributes so the report’s DOM Context and screenshots are
+          recognizably this page.
+        </p>
+        <p>Status marker: <code>data-devset="full-surface"</code></p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>What TRIGGER ALL produces</h2>
+      <ul>
+        <li>Console: <code>log</code>, <code>info</code>, <code>warn</code>, <code>error</code>, <code>debug</code>, a warning reporting the intentional 404, a delayed console error (~900&nbsp;ms).</li>
+        <li>JavaScript: an unhandled Promise rejection and an uncaught runtime exception.</li>
+        <li>Network: one 404, one connection-refused, one delayed connection-refused (~600&nbsp;ms).</li>
+        <li>Focus: moves to the harness target so the DOM snapshot is distinctive.</li>
+      </ul>
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      'use strict';
+
+      var statusEl = document.getElementById('status');
+      var triggerAllBtn = document.getElementById('trigger-all');
+      var targetEl = document.getElementById('target');
+
+      function setStatus(text, ok) {
+        statusEl.textContent = text;
+        statusEl.className = ok ? 'ok' : 'err';
+      }
+
+      function consoleGroup() {
+        console.log('harness: intentional console.log with a stable marker');
+        console.info('harness: intentional console.info');
+        console.warn('harness: intentional console.warn');
+        console.error('harness: intentional console.error');
+        console.debug('harness: intentional console.debug');
+      }
+
+      function fire404() {
+        var nonce = 'devsnitcher-intentional-404-' + Date.now() + '-' + Math.floor(Math.random() * 1e6) + '.txt';
+        fetch('/' + nonce)
+          .then(function (res) {
+            console.warn('harness: intentional HTTP 404 observed (GET /' + nonce + ') →', res.status);
+          })
+          .catch(function (err) {
+            console.warn('harness: 404 probe fetch failed unexpectedly:', err.message);
+          });
+      }
+
+      function fireConnectionRefused(delayed) {
+        var when = delayed ? 'refuse-delayed' : 'refuse-now';
+        fetch('http://127.0.0.1:9/' + when + '-' + Date.now())
+          .catch(function (err) {
+            console.warn('harness: intentional connection-refused observed (' + when + '):', err.message);
+          });
+      }
+
+      function networkGroup() {
+        fire404();
+        fireConnectionRefused(false);
+        setTimeout(function () { fireConnectionRefused(true); }, 600);
+      }
+
+      function jsGroup() {
+        setTimeout(function () {
+          throw new Error('harness: intentional uncaught exception');
+        }, 50);
+        setTimeout(function () {
+          Promise.reject(new Error('harness: intentional unhandled promise rejection'));
+        }, 100);
+        setTimeout(function () {
+          console.error('harness: intentional delayed console error');
+        }, 900);
+      }
+
+      function commit() {
+        targetEl.focus();
+      }
+
+      function triggerAll() {
+        if (triggerAllBtn.disabled) return;
+        triggerAllBtn.disabled = true;
+        setStatus('Triggered. Generating console, network, and JavaScript failures now…', true);
+        consoleGroup();
+        networkGroup();
+        jsGroup();
+        commit();
+        setTimeout(function () {
+          triggerAllBtn.disabled = false;
+          setStatus('Done. All failure surfaces fired. Keep DEVSnitcher acquiring until it reports ready.', true);
+        }, 1400);
+      }
+
+      function triggerConsoleOnly() {
+        consoleGroup();
+        commit();
+      }
+
+      function triggerNetworkOnly() {
+        networkGroup();
+        commit();
+      }
+
+      function triggerJsOnly() {
+        jsGroup();
+        commit();
+      }
+
+      triggerAllBtn.addEventListener('click', triggerAll);
+      document.getElementById('console-btn').addEventListener('click', triggerConsoleOnly);
+      document.getElementById('network-btn').addEventListener('click', triggerNetworkOnly);
+      document.getElementById('js-btn').addEventListener('click', triggerJsOnly);
+
+      setStatus('Ready. Follow the live sequence: SNITCH first, then TRIGGER ALL while acquisition is active.', true);
+    })();
+  </script>
+</body>
+</html>
