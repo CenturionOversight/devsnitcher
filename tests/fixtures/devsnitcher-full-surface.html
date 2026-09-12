@@ -37,6 +37,11 @@
       box-shadow: 0 4px 14px rgba(17, 19, 24, 0.08);
     }
     .card h2 { margin: 0 0 10px; font-size: 1.15rem; }
+    #arm-btn {
+      background: var(--accent-2);
+      color: #fff;
+    }
+    #arm-btn:disabled { opacity: 0.55; cursor: default; }
     .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
     button {
       font: inherit;
@@ -106,6 +111,7 @@
     <div class="card">
       <h2>Controls</h2>
       <div class="controls">
+        <button id="arm-btn" type="button">ARM 3s</button>
         <button id="trigger-all" type="button">TRIGGER ALL</button>
         <button class="secondary" id="console-btn" type="button">Console</button>
         <button class="secondary" id="network-btn" type="button">Network</button>
@@ -118,16 +124,24 @@
       <h2>Live sequence</h2>
       <ol>
         <li>Open this harness.</li>
-        <li>Open DEVSnitcher.</li>
-        <li>Enter an optional User Description in DEVSnitcher’s notes field.</li>
-        <li>Press SNITCH.</li>
-        <li>While acquisition is active, press <strong>TRIGGER ALL</strong> on this page.</li>
-        <li>When DEVSnitcher is ready, <strong>COPY SNITCHSHOT</strong>.</li>
+        <li>Press <strong>ARM 3s</strong>.</li>
+        <li>Immediately open DEVSnitcher.</li>
+        <li>Press <strong>SNITCH</strong>.</li>
+        <li>Do not click outside the DEVSnitcher popup.</li>
+        <li>Allow the armed harness to fire automatically while acquisition is active.</li>
+        <li>Wait for DEVSnitcher to finish.</li>
+        <li><strong>COPY SNITCHSHOT</strong>.</li>
         <li>Paste the report into your AI of choice.</li>
       </ol>
       <p class="note">
         User Description is never fabricated here — it is supplied through
         DEVSnitcher’s notes field before SNITCH.
+      </p>
+      <p class="note">
+        The manual <strong>TRIGGER ALL</strong> button remains for debugging.
+        It closes the DEVSnitcher popup when clicked, so it is not part of the
+        live-acceptance procedure — the armed countdown exists because the
+        popup must stay open while acquisition runs.
       </p>
     </div>
 
@@ -189,7 +203,9 @@
 
       var statusEl = document.getElementById('status');
       var triggerAllBtn = document.getElementById('trigger-all');
+      var armBtn = document.getElementById('arm-btn');
       var targetEl = document.getElementById('target');
+      var armTimer = null;
 
       function setStatus(text, ok) {
         statusEl.textContent = text;
@@ -258,6 +274,30 @@
           setStatus('Done. All failure surfaces fired. Keep DEVSnitcher acquiring until it reports ready.', true);
         }, 1400);
       }
+
+      // Live-acceptance entry point: DEVSnitcher is a popup, so clicking this
+      // page after pressing SNITCH would close the popup. ARM 3s schedules the
+      // SAME triggerAll() path above so the page can fire unattended while the
+      // popup stays open and the acquisition is active.
+      function arm() {
+        if (armTimer !== null) return;
+        var remaining = 3;
+        armBtn.disabled = true;
+        setStatus('ARMED — firing in ' + remaining + '… open DEVSnitcher and press SNITCH now.', false);
+        armTimer = setInterval(function () {
+          remaining -= 1;
+          if (remaining > 0) {
+            setStatus('ARMED — firing in ' + remaining + '… open DEVSnitcher and press SNITCH now.', false);
+            return;
+          }
+          clearInterval(armTimer);
+          armTimer = null;
+          armBtn.disabled = false;
+          triggerAll();
+        }, 1000);
+      }
+
+      armBtn.addEventListener('click', arm);
 
       function triggerConsoleOnly() {
         consoleGroup();
