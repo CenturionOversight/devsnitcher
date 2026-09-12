@@ -89,7 +89,8 @@ import {
   normalizeBoundedSnapshot,
   type InjectionResultLike,
 } from '../devpeeper/observation';
-import { ChromiumObserver } from '../devpeeper/chromium';
+import { ChromiumObserver, type NetworkDrainOptions } from '../devpeeper/chromium';
+import { NetworkTracker } from '../devpeeper/network-normalizer';
 import type { DebuggerTarget, DebuggerTransport } from '../devpeeper/debugger-transport';
 import { normalizeConsoleApi, normalizeExceptionThrown } from '../devpeeper/runtime-normalizer';
 import type { Evidence } from '../shared/types';
@@ -1428,6 +1429,21 @@ describe('DEVPEEPER browser-observed network (DEVPEEPER-004)', () => {
     assert.equal(entries[0].status, 503);
   });
 
+  test('a request with no response and no terminal event is never fabricated as a failure', () => {
+    const tracker = new NetworkTracker();
+    tracker.onRequestWillBeSent({
+      requestId: 'stuck',
+      timestamp: 1.0,
+      request: { url: 'https://api.example/hang', method: 'GET' },
+    });
+
+    const result = tracker.finalize();
+    assert.equal(result.entries.length, 0, 'undetermined must not become a status-0 entry');
+    // Repeated finalize calls are harmless while the request stays in flight.
+    tracker.finalize();
+    assert.equal(tracker.finalize().entries.length, 0);
+  });
+
   test('terminal network events arriving during getNetworkEntries are drained, not dropped', async () => {
     // Premature-finalization regression: a request whose terminal event is still
     // in Chromium's async delivery pipeline when the evidence snapshot starts
@@ -1676,6 +1692,7 @@ describe('bounded SNITCH session lifecycle', () => {
     acquireBounded: () => Promise<{ environment: Evidence['environment']; dom: Evidence['dom'] }>;
     onComplete: (evidence: Evidence, ctx: SnitchSessionContext) => Promise<void>;
     onCancel?: (ctx: SnitchSessionContext) => void;
+    networkDrain?: NetworkDrainOptions;
   }> = {}) {
     const transport = overrides.transport ?? makeSessionTransport();
     const deps = {
@@ -1700,6 +1717,7 @@ describe('bounded SNITCH session lifecycle', () => {
           /* no-op */
         }),
       ...(overrides.onCancel ? { onCancel: overrides.onCancel } : {}),
+      ...(overrides.networkDrain ? { networkDrain: overrides.networkDrain } : {}),
     };
     const session = new SnitchSessionManager(deps);
     return { transport, deps, session };
@@ -1995,6 +2013,112 @@ describe('bounded SNITCH session lifecycle', () => {
     assert.equal(session.isObserving(), false);
     assert.equal(transport.detachCalls.length, 1);
     assert.equal(transport.attachCalls.length, 1, 'session never migrates to another tab');
+  });
+
+  test('cancel during the in-assembly network drain is terminal: no report stored', async () => {
+    // Regression: getNetworkEntries' bounded drain (up to 1500ms) runs while the
+    // session is still assembling evidence. A cancel in that window must stay
+    // effective — the manager reports acquiring, detaches, and never delivers
+    // evidence to onComplete for a canceled session.
+    const captured: { evidence: Evidence | null } = { evidence: null };
+    const transport = makeSessionTransport();
+    const { session } = makeSessionDeps({
+      transport,
+      networkDrain: { tickMs: 5, deadlineMs: 30_000 },
+      acquireBounded: async () => {
+        // Leave one request undetermined so the drain spins during assembly.
+        transport.emitEvent({ tabId: 1 }, 'Network.requestWillBeSent', {
+          requestId: 'hold-drain',
+          timestamp: 1.0,
+          request: { url: 'https://a.example/slow', method: 'GET' },
+        });
+        return {
+          environment: {
+            url: 'https://a.example',
+            title: 'A',
+            browser: 'Chrome',
+            platform: 'Test',
+            viewport: { width: 1280, height: 720 },
+            timestamp: 1,
+          },
+          dom: null,
+        };
+      },
+      onComplete: async (evidence) => {
+        captured.evidence = evidence;
+      },
+    });
+
+    const startPromise = session.start(ctx());
+    // Assembly is now inside the drain (undetermined set non-empty).
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const canceled = await session.cancel();
+
+    assert.equal(canceled, true, 'cancel must report a live session was canceled');
+    assert.equal(session.isObserving(), false, 'cancel returns the manager to idle');
+    assert.equal(transport.detachCalls.length, 1, 'cancel detaches the debugger');
+
+    // Stopping the observer clears the tracker, collapsing the drain; the
+    // winding-down acquisition must finish without storing anything.
+    await startPromise;
+
+    assert.equal(
+      captured.evidence,
+      null,
+      'a canceled session must never deliver evidence to onComplete',
+    );
+    assert.equal(transport.detachCalls.length, 1, 'no second detach after cancel');
+  });
+
+  test('a second SNITCH while evidence assembly is inside the network drain is refused', async () => {
+    // Regression: the drain widened the in-assembly window; a second SNITCH in
+    // that window must still be refused (one live session globally).
+    const captured: { evidence: Evidence | null } = { evidence: null };
+    const transport = makeSessionTransport();
+    const { session } = makeSessionDeps({
+      transport,
+      networkDrain: { tickMs: 5, deadlineMs: 30_000 },
+      acquireBounded: async () => {
+        transport.emitEvent({ tabId: 1 }, 'Network.requestWillBeSent', {
+          requestId: 'hold-drain',
+          timestamp: 1.0,
+          request: { url: 'https://a.example/slow', method: 'GET' },
+        });
+        return {
+          environment: {
+            url: 'https://a.example',
+            title: 'A',
+            browser: 'Chrome',
+            platform: 'Test',
+            viewport: { width: 1280, height: 720 },
+            timestamp: 1,
+          },
+          dom: null,
+        };
+      },
+      onComplete: async (evidence) => {
+        captured.evidence = evidence;
+      },
+    });
+
+    const startPromise = session.start(ctx({ tabId: 1 }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const secondAccepted = await session.start(ctx({ tabId: 2 }));
+    assert.equal(secondAccepted, false, 'in-assembly acquisition is a live session');
+    assert.equal(transport.attachCalls.length, 1, 'no second observer attached');
+
+    // Deliver the terminal event so the first acquisition completes promptly.
+    transport.emitEvent({ tabId: 1 }, 'Network.loadingFailed', {
+      requestId: 'hold-drain',
+      timestamp: 2.0,
+      errorText: 'net::ERR_CONNECTION_REFUSED',
+    });
+    await startPromise;
+
+    assert.ok(captured.evidence, 'the original session completes normally afterwards');
+    assert.equal(captured.evidence!.network.length, 1, 'the retained failure survives assembly');
+    assert.equal(captured.evidence!.network[0].status, 0);
   });
 });
 

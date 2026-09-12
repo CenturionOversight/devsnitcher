@@ -199,28 +199,28 @@ export class ChromiumObserver implements ObservationAdapter {
    * leaves the preview empty and never drops the entry.
    */
   async getNetworkEntries(): Promise<NetworkEntry[]> {
-      await this.drainNetworkLifecycle();
-      const { entries, needBody } = this.networkTracker.finalize();
-      for (const requestId of needBody) {
-        const entry = this.networkTracker.getEntryForRequest(requestId);
-        if (!entry) continue;
-        try {
-          const result = await this.transport.sendCommand(
-            this.target,
-            'Network.getResponseBody',
-            { requestId },
-          );
-          entry.responsePreview = decodeResponseBody(result as GetResponseBodyResult);
-        } catch {
-          // Body unavailable; keep the network entry with an empty preview.
-        } finally {
-          this.networkTracker.markBodyFetched(requestId);
-        }
+    await this.drainNetworkLifecycle();
+    const { entries, needBody } = this.networkTracker.finalize();
+    for (const requestId of needBody) {
+      const entry = this.networkTracker.getEntryForRequest(requestId);
+      if (!entry) continue;
+      try {
+        const result = await this.transport.sendCommand(
+          this.target,
+          'Network.getResponseBody',
+          { requestId },
+        );
+        entry.responsePreview = decodeResponseBody(result as GetResponseBodyResult);
+      } catch {
+        // Body unavailable; keep the network entry with an empty preview.
+      } finally {
+        this.networkTracker.markBodyFetched(requestId);
       }
-      return entries.slice();
     }
+    return entries.slice();
+  }
 
-    /**
+  /**
    * Bounded, lifecycle-tied drain before the network evidence snapshot.
    * Waits only while started requests are still awaiting an outcome
    * (no `responseReceived`, no terminal event), and never beyond the hard
