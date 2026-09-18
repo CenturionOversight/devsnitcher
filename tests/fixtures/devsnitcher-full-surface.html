@@ -111,7 +111,7 @@
     <div class="card">
       <h2>Controls</h2>
       <div class="controls">
-        <button id="arm-btn" type="button" title="Fires once at 3s, then repeats every 2s up to 10 times, so SNITCH pressed anywhere in that window always overlaps live evidence">ARM 3s + BURST</button>
+        <button id="arm-btn" type="button" title="Attempts a burst every 2s starting at 3s, up to 10 real fires (ticks landing inside a still-running burst are retried), so SNITCH pressed anywhere in that window always overlaps live evidence">ARM 3s + BURST</button>
         <button id="trigger-all" type="button">TRIGGER ALL</button>
         <button class="secondary" id="console-btn" type="button">Console</button>
         <button class="secondary" id="network-btn" type="button">Network</button>
@@ -129,7 +129,7 @@
         <li>Immediately open DEVSnitcher.</li>
         <li>Press <strong>SNITCH</strong>.</li>
         <li>Do not click outside the DEVSnitcher popup.</li>
-        <li>Allow the armed harness to fire: one burst at 3s, then the same trigger repeats every 2s up to 10 times, so evidence keeps flowing while acquisition runs.</li>
+        <li>Allow the armed harness to fire: one burst at 3s, then an attempt every 2s up to 10 real fires (a tick blocked by a previous burst is retried), so evidence keeps flowing while acquisition runs.</li>
         <li>Wait for DEVSnitcher to finish.</li>
         <li><strong>COPY SNITCHSHOT</strong>.</li>
         <li>Paste the report into your AI of choice.</li>
@@ -278,7 +278,7 @@
       }
 
       function triggerAll() {
-        if (triggerAllBtn.disabled) return;
+        if (triggerAllBtn.disabled) return false;
         triggerAllBtn.disabled = true;
         setStatus('Triggered. Generating console, network, and JavaScript failures now…', true);
         consoleGroup();
@@ -289,28 +289,18 @@
           triggerAllBtn.disabled = false;
           setStatus('Done. All failure surfaces fired. Keep DEVSnitcher acquiring until it reports ready.', true);
         }, 1400);
+        return true;
       }
 
       // Live-acceptance entry point: DEVSnitcher is a popup, so clicking this
       // page after pressing SNITCH would close the popup, and a single-shot
       // timer can fire before SNITCH is ever pressed. ARM schedules the SAME
-      // triggerAll() path above: one first fire after 3s, then repeated bursts
-      // every 2s up to 10 times, so any SNITCH pressed inside the window
+      // triggerAll() path above: one attempt every 2s starting at 3s, counting
+      // only real fires up to 10, so any SNITCH pressed inside the window
       // overlaps in-flight evidence with no further page interaction.
       function logFire(n) {
-        var line = 'fire ' + n + '/' + ARM_BURST_MAX + ' at ' + new Date().toLocaleTimeString();
-        fireEl.textContent = (fireEl.textContent ? fireEl.textContent + '\n' : '') + line;
-        var lines = fireEl.textContent.split('\n');
-        if (lines.length > 24) fireEl.textContent = lines.slice(-24).join('\n');
-      }
-
-      function disarm() {
-        clearTimeout(armTimer);
-        clearInterval(armBurstTimer);
-        armTimer = null;
-        armBurstTimer = null;
-        armBtn.disabled = false;
-        armBtn.textContent = 'ARM 3s + BURST';
+        fireEl.textContent = (fireEl.textContent ? fireEl.textContent + '\n' : '') +
+          'fire ' + n + '/' + ARM_BURST_MAX + ' at ' + new Date().toLocaleTimeString();
       }
 
       function arm() {
@@ -321,24 +311,31 @@
         setStatus('ARMED — firing in 3… open DEVSnitcher and press SNITCH now.', false);
         armTimer = setTimeout(function () {
           armTimer = null;
-          triggerAll();
-          logFire(1);
-          var fired = 1;
-          setStatus('ARMED — burst 1/' + ARM_BURST_MAX + ' fired; repeating every 2s.', false);
-          armBurstTimer = setInterval(function () {
+          var fired = 0;
+          // One attempt every 2s starting at 3s; only real bursts (the
+          // triggerAll guard has released) advance the count toward the
+          // 10-fire cap. A tick that lands inside a still-active guard — e.g.
+          // right after a manual TRIGGER ALL — is deferred and retried, never
+          // logged as if it fired, so the firing log stays an
+          // acceptance-grade record.
+          var attempt = function () {
+            if (triggerAll()) {
+              fired += 1;
+              logFire(fired);
+              setStatus('ARMED — burst ' + fired + '/' + ARM_BURST_MAX + ' fired.', false);
+            } else {
+              setStatus('ARMED — burst deferred (previous fire still in flight); retrying in 2s.', false);
+            }
             if (fired >= ARM_BURST_MAX) {
               clearInterval(armBurstTimer);
               armBurstTimer = null;
               armBtn.disabled = false;
               armBtn.textContent = 'ARM 3s + BURST';
-              setStatus('ARM burst complete (10 fires). Finish acquisition, then COPY SNITCHSHOT.', true);
-              return;
+              setStatus('ARM burst complete (' + ARM_BURST_MAX + ' fires). Finish acquisition, then COPY SNITCHSHOT.', true);
             }
-            fired += 1;
-            triggerAll();
-            logFire(fired);
-            setStatus('ARMED — burst ' + fired + '/' + ARM_BURST_MAX + ' fired.', false);
-          }, ARM_BURST_INTERVAL_MS);
+          };
+          attempt();
+          armBurstTimer = setInterval(attempt, ARM_BURST_INTERVAL_MS);
         }, ARM_FIRST_FIRE_MS);
       }
 
