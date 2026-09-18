@@ -111,12 +111,13 @@
     <div class="card">
       <h2>Controls</h2>
       <div class="controls">
-        <button id="arm-btn" type="button">ARM 3s</button>
+        <button id="arm-btn" type="button" title="Fires once at 3s, then repeats every 2s up to 10 times, so SNITCH pressed anywhere in that window always overlaps live evidence">ARM 3s + BURST</button>
         <button id="trigger-all" type="button">TRIGGER ALL</button>
         <button class="secondary" id="console-btn" type="button">Console</button>
         <button class="secondary" id="network-btn" type="button">Network</button>
         <button class="secondary" id="js-btn" type="button">JavaScript</button>
       </div>
+      <p id="fire-log" aria-live="polite" style="font-family:Consolas,monospace;font-size:0.85rem;margin:10px 0 0;white-space:pre-wrap;"></p>
       <p id="status" aria-live="polite"></p>
     </div>
 
@@ -128,7 +129,7 @@
         <li>Immediately open DEVSnitcher.</li>
         <li>Press <strong>SNITCH</strong>.</li>
         <li>Do not click outside the DEVSnitcher popup.</li>
-        <li>Allow the armed harness to fire automatically while acquisition is active.</li>
+        <li>Allow the armed harness to fire: one burst at 3s, then the same trigger repeats every 2s up to 10 times, so evidence keeps flowing while acquisition runs.</li>
         <li>Wait for DEVSnitcher to finish.</li>
         <li><strong>COPY SNITCHSHOT</strong>.</li>
         <li>Paste the report into your AI of choice.</li>
@@ -140,8 +141,12 @@
       <p class="note">
         The manual <strong>TRIGGER ALL</strong> button remains for debugging.
         It closes the DEVSnitcher popup when clicked, so it is not part of the
-        live-acceptance procedure — the armed countdown exists because the
-        popup must stay open while acquisition runs.
+        live-acceptance procedure. <strong>ARM 3s</strong> exists because the
+        popup must stay open while acquisition runs: it fires once after 3
+        seconds, then repeats the same trigger every 2 seconds up to 10 times,
+        so a SNITCH pressed anywhere in that window always overlaps live
+        evidence, and the firing log timestamps each burst for the acceptance
+        record.
       </p>
     </div>
 
@@ -204,8 +209,19 @@
       var statusEl = document.getElementById('status');
       var triggerAllBtn = document.getElementById('trigger-all');
       var armBtn = document.getElementById('arm-btn');
+      var fireEl = document.getElementById('fire-log');
       var targetEl = document.getElementById('target');
       var armTimer = null;
+      var armBurstTimer = null;
+      // Live-acceptance timing: the first burst fires 3s after ARM (time to
+      // open the popup and press SNITCH), then the SAME triggerAll() repeats
+      // every 2s up to 10 times. A SNITCH pressed at any point in the ~17s
+      // window therefore always overlaps an in-flight burst, so the run cannot
+      // be lost to a timing race, and the log timestamps prove the harness
+      // fired while acquisition was active.
+      var ARM_FIRST_FIRE_MS = 3000;
+      var ARM_BURST_INTERVAL_MS = 2000;
+      var ARM_BURST_MAX = 10;
 
       function setStatus(text, ok) {
         statusEl.textContent = text;
@@ -276,25 +292,54 @@
       }
 
       // Live-acceptance entry point: DEVSnitcher is a popup, so clicking this
-      // page after pressing SNITCH would close the popup. ARM 3s schedules the
-      // SAME triggerAll() path above so the page can fire unattended while the
-      // popup stays open and the acquisition is active.
+      // page after pressing SNITCH would close the popup, and a single-shot
+      // timer can fire before SNITCH is ever pressed. ARM schedules the SAME
+      // triggerAll() path above: one first fire after 3s, then repeated bursts
+      // every 2s up to 10 times, so any SNITCH pressed inside the window
+      // overlaps in-flight evidence with no further page interaction.
+      function logFire(n) {
+        var line = 'fire ' + n + '/' + ARM_BURST_MAX + ' at ' + new Date().toLocaleTimeString();
+        fireEl.textContent = (fireEl.textContent ? fireEl.textContent + '\n' : '') + line;
+        var lines = fireEl.textContent.split('\n');
+        if (lines.length > 24) fireEl.textContent = lines.slice(-24).join('\n');
+      }
+
+      function disarm() {
+        clearTimeout(armTimer);
+        clearInterval(armBurstTimer);
+        armTimer = null;
+        armBurstTimer = null;
+        armBtn.disabled = false;
+        armBtn.textContent = 'ARM 3s + BURST';
+      }
+
       function arm() {
-        if (armTimer !== null) return;
-        var remaining = 3;
+        if (armTimer !== null || armBurstTimer !== null) return;
+        fireEl.textContent = 'armed at ' + new Date().toLocaleTimeString();
         armBtn.disabled = true;
-        setStatus('ARMED — firing in ' + remaining + '… open DEVSnitcher and press SNITCH now.', false);
-        armTimer = setInterval(function () {
-          remaining -= 1;
-          if (remaining > 0) {
-            setStatus('ARMED — firing in ' + remaining + '… open DEVSnitcher and press SNITCH now.', false);
-            return;
-          }
-          clearInterval(armTimer);
+        armBtn.textContent = 'ARMED — firing…';
+        setStatus('ARMED — firing in 3… open DEVSnitcher and press SNITCH now.', false);
+        armTimer = setTimeout(function () {
           armTimer = null;
-          armBtn.disabled = false;
           triggerAll();
-        }, 1000);
+          logFire(1);
+          var fired = 1;
+          setStatus('ARMED — burst 1/' + ARM_BURST_MAX + ' fired; repeating every 2s.', false);
+          armBurstTimer = setInterval(function () {
+            if (fired >= ARM_BURST_MAX) {
+              clearInterval(armBurstTimer);
+              armBurstTimer = null;
+              armBtn.disabled = false;
+              armBtn.textContent = 'ARM 3s + BURST';
+              setStatus('ARM burst complete (10 fires). Finish acquisition, then COPY SNITCHSHOT.', true);
+              return;
+            }
+            fired += 1;
+            triggerAll();
+            logFire(fired);
+            setStatus('ARMED — burst ' + fired + '/' + ARM_BURST_MAX + ' fired.', false);
+          }, ARM_BURST_INTERVAL_MS);
+        }, ARM_FIRST_FIRE_MS);
       }
 
       armBtn.addEventListener('click', arm);
@@ -319,7 +364,7 @@
       document.getElementById('network-btn').addEventListener('click', triggerNetworkOnly);
       document.getElementById('js-btn').addEventListener('click', triggerJsOnly);
 
-      setStatus('Ready. Follow the live sequence: SNITCH first, then TRIGGER ALL while acquisition is active.', true);
+      setStatus('Ready. Press ARM 3s, then open DEVSnitcher and press SNITCH — no further page interaction needed.', true);
     })();
   </script>
 </body>
